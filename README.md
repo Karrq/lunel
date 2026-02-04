@@ -1,4 +1,5 @@
-<img src="https://delhi.lunel.dev/og/og.png" alt="Lunel" style="max-width: 500px; margin-bottom: 20px;" />
+<img src="https://delhi.lunel.dev/og/og.png" alt="Lunel" width="500" />
+<br>
 
 AI-powered mobile IDE and cloud development platform. Code on your phone, run on your machine or in secure cloud sandboxes.
 
