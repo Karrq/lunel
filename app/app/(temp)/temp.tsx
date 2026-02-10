@@ -1,10 +1,7 @@
-import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { LogOut } from "lucide-react-native";
-import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import {
-  Alert,
   Image,
   Pressable,
   ScrollView,
@@ -14,19 +11,7 @@ import {
 } from "react-native";
 
 export default function TempPage() {
-  const { logout } = useAuth();
   const { colors, isDark, radius } = useTheme();
-  const router = useRouter();
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      router.replace("/auth");
-    } catch (error) {
-      console.error("Logout failed:", error);
-      Alert.alert("Error", "Failed to logout. Please try again.");
-    }
-  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg.base }]}>
@@ -52,7 +37,7 @@ export default function TempPage() {
         <View style={styles.content}>
           <View style={styles.buttonsContainer}>
             <Pressable
-              onPress={handleLogout}
+              onPress={() => {}}
               style={[
                 styles.button,
                 {

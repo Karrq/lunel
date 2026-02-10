@@ -3,7 +3,7 @@ import { randomBytes } from "crypto";
 
 const CHARSET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 const CODE_LENGTH = 10;
-const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const SAFETY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — only catches zombie sessions
 const CONTROL_MAX_SIZE = 64 * 1024; // 64KB
 
 type Role = "cli" | "app";
@@ -48,13 +48,20 @@ function terminateSession(session: Session, reason: string): void {
 function cleanupExpiredSessions(): void {
   const now = Date.now();
   for (const [_, session] of sessions) {
-    if (now - session.createdAt > SESSION_TTL_MS) {
-      terminateSession(session, "session expired");
+    const hasAnySockets =
+      session.sockets.cli.control !== null ||
+      session.sockets.cli.data !== null ||
+      session.sockets.app.control !== null ||
+      session.sockets.app.data !== null;
+
+    // Only clean up sessions that are truly orphaned AND old
+    if (!hasAnySockets && now - session.createdAt > SAFETY_TTL_MS) {
+      terminateSession(session, "safety TTL expired (no sockets)");
     }
   }
 }
 
-setInterval(cleanupExpiredSessions, 60 * 1000);
+setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
 
 function isPeerFullyConnected(session: Session, role: Role): boolean {
   return session.sockets[role].control !== null && session.sockets[role].data !== null;
@@ -70,7 +77,7 @@ function sendSystemMessage(ws: ServerWebSocket<WebSocketData>, type: string, pay
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
@@ -108,6 +115,18 @@ const server = Bun.serve<WebSocketData>({
 
       console.log(`[session] created: ${code}`);
       return Response.json({ code }, { headers: corsHeaders });
+    }
+
+    // Delete (close) session explicitly
+    const deleteMatch = path.match(/^\/v1\/session\/([A-Za-z0-9]+)$/);
+    if (deleteMatch && req.method === "DELETE") {
+      const code = deleteMatch[1];
+      const session = sessions.get(code);
+      if (!session) {
+        return Response.json({ error: "session not found" }, { status: 404, headers: corsHeaders });
+      }
+      terminateSession(session, "closed by user");
+      return Response.json({ ok: true }, { headers: corsHeaders });
     }
 
     // WebSocket upgrade
@@ -210,8 +229,18 @@ const server = Bun.serve<WebSocketData>({
 
       if (session) {
         session.sockets[role][channel] = null;
-        // Either side disconnects → terminate entire session
-        terminateSession(session, `${role} disconnected`);
+
+        // Notify the other peer that this side disconnected
+        const opposite = getOppositeRole(role);
+        const oppositeControl = session.sockets[opposite].control;
+        if (oppositeControl) {
+          sendSystemMessage(oppositeControl, "peer_disconnected", { peer: role });
+        }
+
+        // Unlock so either side can reconnect with the same code
+        if (!isPeerFullyConnected(session, role)) {
+          session.locked = false;
+        }
       }
     },
   },

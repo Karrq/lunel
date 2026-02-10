@@ -1,4 +1,3 @@
-import { AuthProvider } from "@/contexts/AuthContext";
 import { ConnectionProvider } from "@/contexts/ConnectionContext";
 import { EditorProvider } from "@/contexts/EditorContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
@@ -210,16 +209,14 @@ function RootLayoutContent() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <ConnectionProvider>
-        <ThemeProvider>
-          <EditorProvider>
-            <PluginProvider>
-              <RootLayoutContent />
-            </PluginProvider>
-          </EditorProvider>
-        </ThemeProvider>
-      </ConnectionProvider>
-    </AuthProvider>
+    <ConnectionProvider>
+      <ThemeProvider>
+        <EditorProvider>
+          <PluginProvider>
+            <RootLayoutContent />
+          </PluginProvider>
+        </EditorProvider>
+      </ThemeProvider>
+    </ConnectionProvider>
   );
 }

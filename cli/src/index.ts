@@ -2,6 +2,7 @@
 
 import { WebSocket } from "ws";
 import qrcode from "qrcode-terminal";
+import { createOpencode } from "@opencode-ai/sdk";
 import Ignore from "ignore";
 const ignore = Ignore.default;
 type IgnoreInstance = ReturnType<typeof ignore>;
@@ -36,6 +37,9 @@ const processOutputBuffers = new Map<string, string>();
 
 // CPU usage tracking
 let lastCpuInfo: { idle: number; total: number }[] | null = null;
+
+// OpenCode client
+let opencodeClient: Awaited<ReturnType<typeof createOpencode>>["client"] | null = null;
 
 // ============================================================================
 // Types
@@ -746,7 +750,7 @@ function handleTerminalKill(payload: Record<string, unknown>): Record<string, un
 function handleSystemCapabilities(): Record<string, unknown> {
   return {
     version: VERSION,
-    namespaces: ["fs", "git", "terminal", "processes", "ports", "monitor", "http"],
+    namespaces: ["fs", "git", "terminal", "processes", "ports", "monitor", "http", "ai"],
     platform: os.platform(),
     rootDir: ROOT_DIR,
     hostname: os.hostname(),
@@ -1280,6 +1284,167 @@ async function handleHttpRequest(payload: Record<string, unknown>): Promise<Reco
 }
 
 // ============================================================================
+// AI Handlers (OpenCode SDK)
+// ============================================================================
+
+async function handleAiCreateSession(payload: Record<string, unknown>) {
+  const title = (payload.title as string) || undefined;
+  const response = await opencodeClient!.session.create({ body: { title } });
+  return { session: response.data };
+}
+
+async function handleAiListSessions() {
+  const response = await opencodeClient!.session.list();
+  return { sessions: response.data };
+}
+
+async function handleAiGetSession(payload: Record<string, unknown>) {
+  const id = payload.id as string;
+  const response = await opencodeClient!.session.get({ path: { id } });
+  return { session: response.data };
+}
+
+async function handleAiDeleteSession(payload: Record<string, unknown>) {
+  const id = payload.id as string;
+  await opencodeClient!.session.delete({ path: { id } });
+  return {};
+}
+
+async function handleAiGetMessages(payload: Record<string, unknown>) {
+  const id = payload.id as string;
+  const response = await opencodeClient!.session.messages({ path: { id } });
+  return { messages: response.data };
+}
+
+async function handleAiPrompt(payload: Record<string, unknown>) {
+  const sessionId = payload.sessionId as string;
+  const text = payload.text as string;
+  const model = payload.model as { providerID: string; modelID: string } | undefined;
+
+  // Fire and forget — results stream via SSE events forwarded on data channel
+  opencodeClient!.session.prompt({
+    path: { id: sessionId },
+    body: {
+      parts: [{ type: "text", text }],
+      ...(model ? { model } : {}),
+    },
+  }).catch((err) => {
+    if (dataChannel && dataChannel.readyState === WebSocket.OPEN) {
+      dataChannel.send(JSON.stringify({
+        v: 1,
+        id: `evt-${Date.now()}`,
+        ns: "ai",
+        action: "event",
+        payload: {
+          type: "prompt_error",
+          properties: { sessionId, error: (err as Error).message },
+        },
+      }));
+    }
+  });
+
+  return { ack: true };
+}
+
+async function handleAiAbort(payload: Record<string, unknown>) {
+  const id = payload.sessionId as string;
+  await opencodeClient!.session.abort({ path: { id } });
+  return {};
+}
+
+async function handleAiAgents() {
+  const response = await opencodeClient!.app.agents();
+  return { agents: response.data };
+}
+
+async function handleAiProviders() {
+  const response = await opencodeClient!.config.providers();
+  return { providers: response.data };
+}
+
+async function handleAiSetAuth(payload: Record<string, unknown>) {
+  const providerId = payload.providerId as string;
+  const key = payload.key as string;
+  await opencodeClient!.auth.set({
+    path: { id: providerId },
+    body: { type: "api", key },
+  });
+  return {};
+}
+
+async function handleAiCommand(payload: Record<string, unknown>) {
+  const sessionId = payload.sessionId as string;
+  const command = payload.command as string;
+  const args = (payload.arguments as string) || "";
+  const response = await opencodeClient!.session.command({
+    path: { id: sessionId },
+    body: { command, arguments: args },
+  });
+  return { result: response.data };
+}
+
+async function handleAiRevert(payload: Record<string, unknown>) {
+  const sessionId = payload.sessionId as string;
+  const messageId = payload.messageId as string;
+  await opencodeClient!.session.revert({
+    path: { id: sessionId },
+    body: { messageID: messageId },
+  });
+  return {};
+}
+
+async function handleAiUnrevert(payload: Record<string, unknown>) {
+  const sessionId = payload.sessionId as string;
+  await opencodeClient!.session.unrevert({ path: { id: sessionId } });
+  return {};
+}
+
+async function handleAiShare(payload: Record<string, unknown>) {
+  const sessionId = payload.sessionId as string;
+  const response = await opencodeClient!.session.share({ path: { id: sessionId } });
+  return { share: response.data };
+}
+
+async function handleAiPermissionReply(payload: Record<string, unknown>) {
+  const permissionId = payload.permissionId as string;
+  const sessionId = payload.sessionId as string;
+  const approved = payload.approved as boolean;
+
+  await opencodeClient!.postSessionIdPermissionsPermissionId({
+    path: { id: sessionId, permissionID: permissionId },
+    body: { response: approved ? "once" : "reject" },
+  });
+
+  return {};
+}
+
+// SSE event forwarding from OpenCode to mobile app
+async function subscribeToOpenCodeEvents(client: typeof opencodeClient) {
+  try {
+    const events = await client!.event.subscribe();
+
+    for await (const event of events.stream) {
+      if (dataChannel && dataChannel.readyState === WebSocket.OPEN) {
+        const msg: Message = {
+          v: 1,
+          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          ns: "ai",
+          action: "event",
+          payload: {
+            type: (event as any).type,
+            properties: (event as any).properties,
+          },
+        };
+        dataChannel.send(JSON.stringify(msg));
+      }
+    }
+  } catch (err) {
+    console.error("OpenCode event stream error:", err);
+    setTimeout(() => subscribeToOpenCodeEvents(client), 3000);
+  }
+}
+
+// ============================================================================
 // Message Router
 // ============================================================================
 
@@ -1479,6 +1644,28 @@ async function processMessage(message: Message): Promise<Response> {
         }
         break;
 
+      case "ai":
+        switch (action) {
+          case "prompt":          result = await handleAiPrompt(payload); break;
+          case "createSession":   result = await handleAiCreateSession(payload); break;
+          case "listSessions":    result = await handleAiListSessions(); break;
+          case "getSession":      result = await handleAiGetSession(payload); break;
+          case "deleteSession":   result = await handleAiDeleteSession(payload); break;
+          case "getMessages":     result = await handleAiGetMessages(payload); break;
+          case "abort":           result = await handleAiAbort(payload); break;
+          case "agents":          result = await handleAiAgents(); break;
+          case "providers":       result = await handleAiProviders(); break;
+          case "setAuth":         result = await handleAiSetAuth(payload); break;
+          case "command":         result = await handleAiCommand(payload); break;
+          case "revert":          result = await handleAiRevert(payload); break;
+          case "unrevert":        result = await handleAiUnrevert(payload); break;
+          case "share":           result = await handleAiShare(payload); break;
+          case "permission":      result = await handleAiPermissionReply(payload); break;
+          default:
+            throw Object.assign(new Error(`Unknown action: ${ns}.${action}`), { code: "EINVAL" });
+        }
+        break;
+
       default:
         throw Object.assign(new Error(`Unknown namespace: ${ns}`), { code: "EINVAL" });
     }
@@ -1659,6 +1846,15 @@ async function main(): Promise<void> {
   console.log("=".repeat(20) + "\n");
 
   try {
+    // Start OpenCode server + client
+    console.log("Starting OpenCode...");
+    const { client } = await createOpencode();
+    opencodeClient = client;
+    console.log("OpenCode ready.\n");
+
+    // Subscribe to OpenCode events
+    subscribeToOpenCodeEvents(client);
+
     const code = await createSession();
     displayQR(code);
     connectWebSocket(code);

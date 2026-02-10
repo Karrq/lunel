@@ -4,15 +4,16 @@ import { AIAPI } from '../../gpi';
 import AIPanel from './Panel';
 
 // AI plugin API implementation
+// Note: The real OpenCode integration happens via useAI hook inside Panel.tsx.
+// This GPI API provides a simple cross-plugin interface for other plugins to send messages.
 const aiApi = (): AIAPI => ({
   sendMessage: async (message: string) => {
-    // TODO: Implement when connected to AI backend
-    console.log('Sending message to AI:', message);
-    return 'AI response placeholder';
+    // Cross-plugin messaging is handled by the Panel component via useAI hook
+    console.log('[ai] GPI sendMessage:', message);
+    return 'Use the AI panel directly for OpenCode integration';
   },
   clearChat: async () => {
-    // TODO: Implement
-    console.log('Clearing chat');
+    console.log('[ai] GPI clearChat');
   },
 });
 

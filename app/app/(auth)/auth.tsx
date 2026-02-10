@@ -1,4 +1,3 @@
-import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Github, Link2 } from "lucide-react-native";
 import { useRouter } from "expo-router";
@@ -11,18 +10,8 @@ import {
 } from "react-native";
 
 export default function Auth() {
-  const { login } = useAuth();
   const { colors, fonts, radius, isDark } = useTheme();
   const router = useRouter();
-
-  const handleLogin = async () => {
-    try {
-      await login();
-      router.replace("/temp");
-    } catch (error) {
-      console.error("Login failed:", error);
-    }
-  };
 
   const handleLunelLink = () => {
     router.push("/lunel-link");
@@ -43,7 +32,7 @@ export default function Auth() {
 
         <View style={styles.buttonsContainer}>
           <TouchableOpacity
-            onPress={handleLogin}
+            onPress={() => {}}
             activeOpacity={0.8}
             style={[
               styles.button,
