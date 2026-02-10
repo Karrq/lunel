@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { configureProxy, startPortServers, stopAllServers } from '@/lib/proxyServer';
 
 const PROXY_URL = 'wss://gateway.lunel.dev';
 
@@ -79,6 +80,8 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const pendingRequestsRef = useRef<Map<string, PendingRequest>>(new Map());
   const dataEventHandlersRef = useRef<Set<(message: Message) => void>>(new Set());
   const messageIdRef = useRef(0);
+  const sessionCodeRef = useRef<string | null>(null);
+  const sendControlRef = useRef<((ns: string, action: string, payload?: Record<string, unknown>) => Promise<Response>) | null>(null);
 
   const generateId = useCallback(() => {
     messageIdRef.current += 1;
@@ -96,6 +99,10 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
 
       if (message.type === 'peer_connected') {
         console.log('[connection] CLI connected');
+        // Configure proxy tunnel system
+        if (sessionCodeRef.current && sendControlRef.current) {
+          configureProxy(sessionCodeRef.current, sendControlRef.current);
+        }
         return;
       }
 
@@ -113,6 +120,16 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
           clearTimeout(pending.timeout);
           pendingRequestsRef.current.delete(message.id);
           pending.resolve(message as Response);
+          return;
+        }
+
+        // Handle proxy port discovery events from CLI
+        if (message.ns === 'proxy' && message.action === 'ports_discovered') {
+          const ports = message.payload?.ports as number[];
+          if (ports && ports.length > 0) {
+            console.log('[connection] CLI discovered open ports:', ports);
+            startPortServers(ports);
+          }
           return;
         }
 
@@ -159,6 +176,9 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     return sendMessage(controlWsRef.current, ns, action, payload);
   }, [sendMessage]);
 
+  // Keep ref in sync for proxy module access
+  sendControlRef.current = sendControl;
+
   const sendData = useCallback((ns: string, action: string, payload?: Record<string, unknown>) => {
     return sendMessage(dataWsRef.current, ns, action, payload);
   }, [sendMessage]);
@@ -171,12 +191,14 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const disconnect = useCallback(() => {
+    stopAllServers();
     controlWsRef.current?.close();
     dataWsRef.current?.close();
     controlWsRef.current = null;
     dataWsRef.current = null;
     setStatus('disconnected');
     setSessionCode(null);
+    sessionCodeRef.current = null;
     setCapabilities(null);
     setError(null);
 
@@ -192,6 +214,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     disconnect();
     setStatus('connecting');
     setSessionCode(code);
+    sessionCodeRef.current = code;
     setError(null);
 
     return new Promise<void>((resolve, reject) => {

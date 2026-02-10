@@ -10,10 +10,12 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { spawn, ChildProcess, execSync } from "child_process";
-import { createServer, Socket } from "net";
+import { createServer, createConnection, Socket } from "net";
 
 const PROXY_URL = process.env.LUNEL_PROXY_URL || "https://gateway.lunel.dev";
-const VERSION = "0.1.3";
+import { createRequire } from "module";
+const __require = createRequire(import.meta.url);
+const VERSION = (__require("../package.json") as { version: string }).version;
 
 // Root directory - sandbox all file operations to this
 const ROOT_DIR = process.cwd();
@@ -40,6 +42,65 @@ let lastCpuInfo: { idle: number; total: number }[] | null = null;
 
 // OpenCode client
 let opencodeClient: Awaited<ReturnType<typeof createOpencode>>["client"] | null = null;
+// Proxy tunnel management
+let currentSessionCode: string | null = null;
+interface ActiveTunnel {
+  tunnelId: string;
+  port: number;
+  tcpSocket: Socket;
+  proxyWs: WebSocket;
+}
+const activeTunnels = new Map<string, ActiveTunnel>();
+
+// Popular development server ports to scan on connect
+const DEV_PORTS: number[] = [
+  1234,  // Parcel
+  1313,  // Hugo
+  2000,  // Deno (alt)
+  3000,  // Next.js / CRA / Remix / Express
+  3001,  // Next.js (alt)
+  3002,  // Dev server (alt)
+  3003,  // Dev server (alt)
+  3333,  // AdonisJS / Nitro
+  4000,  // Gatsby / Redwood
+  4200,  // Angular CLI
+  4321,  // Astro
+  4173,  // Vite preview
+  4444,  // Selenium
+  4567,  // Sinatra
+  5000,  // Flask / Sails.js
+  5001,  // Flask (alt)
+  5173,  // Vite
+  5174,  // Vite (alt)
+  5175,  // Vite (alt)
+  5500,  // Live Server (VS Code)
+  5555,  // Prisma Studio
+  6006,  // Storybook
+  7000,  // Hapi
+  7070,  // Dev server
+  7777,  // Dev server
+  8000,  // Django / Laravel / Gatsby
+  8001,  // Django (alt)
+  8008,  // Dev server
+  8010,  // Dev server
+  8080,  // Vue CLI / Webpack Dev Server / Spring Boot
+  8081,  // Metro Bundler
+  8082,  // Dev server (alt)
+  8100,  // Ionic
+  8200,  // Vault
+  8443,  // HTTPS dev server
+  8787,  // Wrangler (Cloudflare Workers)
+  8888,  // Jupyter Notebook
+  8899,  // Dev server
+  9000,  // PHP / SonarQube
+  9090,  // Prometheus / Cockpit
+  9200,  // Elasticsearch
+  9229,  // Node.js debugger
+  9292,  // Rack (Ruby)
+  10000, // Webmin
+  19006, // Expo web
+  24678, // Vite HMR WebSocket
+];
 
 // ============================================================================
 // Types
@@ -750,7 +811,7 @@ function handleTerminalKill(payload: Record<string, unknown>): Record<string, un
 function handleSystemCapabilities(): Record<string, unknown> {
   return {
     version: VERSION,
-    namespaces: ["fs", "git", "terminal", "processes", "ports", "monitor", "http", "ai"],
+    namespaces: ["fs", "git", "terminal", "processes", "ports", "monitor", "http", "ai", "proxy"],
     platform: os.platform(),
     rootDir: ROOT_DIR,
     hostname: os.hostname(),
@@ -1442,6 +1503,148 @@ async function subscribeToOpenCodeEvents(client: typeof opencodeClient) {
     console.error("OpenCode event stream error:", err);
     setTimeout(() => subscribeToOpenCodeEvents(client), 3000);
   }
+// Proxy Handlers
+// ============================================================================
+
+async function scanDevPorts(): Promise<number[]> {
+  const openPorts: number[] = [];
+
+  const checks = DEV_PORTS.map((port) => {
+    return new Promise<void>((resolve) => {
+      const socket = createConnection({ port, host: "127.0.0.1" });
+      socket.setTimeout(200);
+
+      socket.on("connect", () => {
+        openPorts.push(port);
+        socket.destroy();
+        resolve();
+      });
+
+      socket.on("timeout", () => {
+        socket.destroy();
+        resolve();
+      });
+
+      socket.on("error", () => {
+        resolve();
+      });
+    });
+  });
+
+  await Promise.all(checks);
+  return openPorts.sort((a, b) => a - b);
+}
+
+async function handleProxyConnect(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const tunnelId = payload.tunnelId as string;
+  const port = payload.port as number;
+
+  if (!tunnelId) throw Object.assign(new Error("tunnelId is required"), { code: "EINVAL" });
+  if (!port) throw Object.assign(new Error("port is required"), { code: "EINVAL" });
+  if (!currentSessionCode) throw Object.assign(new Error("no active session"), { code: "ENOENT" });
+
+  // 1. Open TCP connection to the local service
+  const tcpSocket = createConnection({ port, host: "127.0.0.1" });
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      tcpSocket.destroy();
+      reject(Object.assign(new Error(`TCP connect timeout to localhost:${port}`), { code: "ETIMEOUT" }));
+    }, 5000);
+
+    tcpSocket.on("connect", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    tcpSocket.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(Object.assign(new Error(`TCP connect failed: ${err.message}`), { code: "ECONNREFUSED" }));
+    });
+  });
+
+  // 2. Open proxy WebSocket to gateway
+  const wsBase = PROXY_URL.replace(/^http/, "ws");
+  const proxyWsUrl = `${wsBase}/v1/ws/proxy?code=${currentSessionCode}&tunnelId=${tunnelId}&role=cli`;
+  const proxyWs = new WebSocket(proxyWsUrl);
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      proxyWs.close();
+      tcpSocket.destroy();
+      reject(Object.assign(new Error("Proxy WS connect timeout"), { code: "ETIMEOUT" }));
+    }, 5000);
+
+    proxyWs.on("open", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    proxyWs.on("error", (err) => {
+      clearTimeout(timeout);
+      tcpSocket.destroy();
+      reject(Object.assign(new Error(`Proxy WS failed: ${err.message}`), { code: "ECONNREFUSED" }));
+    });
+  });
+
+  // 3. Store the tunnel
+  activeTunnels.set(tunnelId, { tunnelId, port, tcpSocket, proxyWs });
+
+  // 4. Pipe: TCP data -> proxy WS (as binary)
+  tcpSocket.on("data", (chunk: Buffer) => {
+    if (proxyWs.readyState === WebSocket.OPEN) {
+      proxyWs.send(chunk);
+    }
+  });
+
+  // 5. Pipe: proxy WS -> TCP socket (as binary)
+  proxyWs.on("message", (data: Buffer) => {
+    if (!tcpSocket.destroyed) {
+      tcpSocket.write(data);
+    }
+  });
+
+  // 6. Close cascade: TCP closes -> close WS
+  tcpSocket.on("close", () => {
+    activeTunnels.delete(tunnelId);
+    if (proxyWs.readyState === WebSocket.OPEN || proxyWs.readyState === WebSocket.CONNECTING) {
+      proxyWs.close();
+    }
+  });
+
+  tcpSocket.on("error", () => {
+    activeTunnels.delete(tunnelId);
+    if (proxyWs.readyState === WebSocket.OPEN || proxyWs.readyState === WebSocket.CONNECTING) {
+      proxyWs.close();
+    }
+  });
+
+  // 7. Close cascade: WS closes -> close TCP
+  proxyWs.on("close", () => {
+    activeTunnels.delete(tunnelId);
+    if (!tcpSocket.destroyed) {
+      tcpSocket.destroy();
+    }
+  });
+
+  proxyWs.on("error", () => {
+    activeTunnels.delete(tunnelId);
+    if (!tcpSocket.destroyed) {
+      tcpSocket.destroy();
+    }
+  });
+
+  return { tunnelId, port };
+}
+
+function cleanupAllTunnels(): void {
+  for (const [, tunnel] of activeTunnels) {
+    tunnel.tcpSocket.destroy();
+    if (tunnel.proxyWs.readyState === WebSocket.OPEN) {
+      tunnel.proxyWs.close();
+    }
+  }
+  activeTunnels.clear();
 }
 
 // ============================================================================
@@ -1661,6 +1864,11 @@ async function processMessage(message: Message): Promise<Response> {
           case "unrevert":        result = await handleAiUnrevert(payload); break;
           case "share":           result = await handleAiShare(payload); break;
           case "permission":      result = await handleAiPermissionReply(payload); break;
+      case "proxy":
+        switch (action) {
+          case "connect":
+            result = await handleProxyConnect(payload);
+            break;
           default:
             throw Object.assign(new Error(`Unknown action: ${ns}.${action}`), { code: "EINVAL" });
         }
@@ -1718,6 +1926,7 @@ function displayQR(code: string): void {
 }
 
 function connectWebSocket(code: string): void {
+  currentSessionCode = code;
   const wsBase = PROXY_URL.replace(/^http/, "ws");
   const controlUrl = `${wsBase}/v1/ws/cli/control?code=${code}`;
   const dataUrl = `${wsBase}/v1/ws/cli/data?code=${code}`;
@@ -1758,6 +1967,25 @@ function connectWebSocket(code: string): void {
 
       if (message.type === "peer_connected") {
         console.log("App connected!\n");
+
+        // Scan dev ports and notify app
+        scanDevPorts().then((openPorts) => {
+          if (openPorts.length > 0) {
+            console.log(`Found ${openPorts.length} open dev port(s): ${openPorts.join(", ")}`);
+          }
+          if (controlWs.readyState === WebSocket.OPEN) {
+            controlWs.send(JSON.stringify({
+              v: 1,
+              id: `evt-${Date.now()}`,
+              ns: "proxy",
+              action: "ports_discovered",
+              payload: { ports: openPorts },
+            }));
+          }
+        }).catch((err) => {
+          console.error("Port scan failed:", err);
+        });
+
         return;
       }
 
@@ -1778,6 +2006,7 @@ function connectWebSocket(code: string): void {
 
   controlWs.on("close", (code, reason) => {
     console.log(`\nControl channel disconnected (${code}: ${reason.toString()})`);
+    cleanupAllTunnels();
     dataWs.close();
     process.exit(0);
   });
@@ -1813,6 +2042,7 @@ function connectWebSocket(code: string): void {
 
   dataWs.on("close", (code, reason) => {
     console.log(`\nData channel disconnected (${code}: ${reason.toString()})`);
+    cleanupAllTunnels();
     controlWs.close();
     process.exit(0);
   });
@@ -1835,6 +2065,7 @@ function connectWebSocket(code: string): void {
     }
     processes.clear();
     processOutputBuffers.clear();
+    cleanupAllTunnels();
     controlWs.close();
     dataWs.close();
     process.exit(0);
