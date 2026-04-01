@@ -15,7 +15,7 @@ import * as fssync from "fs";
 import * as path from "path";
 import * as os from "os";
 import { randomBytes } from "crypto";
-import { spawn, spawnSync, ChildProcess, execSync, execFileSync } from "child_process";
+import { spawn, spawnSync, ChildProcess, execSync } from "child_process";
 import { createServer, createConnection, Socket } from "net";
 import { createInterface } from "readline";
 
@@ -34,10 +34,22 @@ if (DEBUG_MODE) {
 import { createRequire } from "module";
 const __require = createRequire(import.meta.url);
 const VERSION = (__require("../package.json") as { version: string }).version;
-const PTY_RELEASE_INFO_URL =
-  process.env.LUNEL_PTY_INFO_URL ||
-  "https://raw.githubusercontent.com/ssbharambe-m/pty-releases/refs/heads/main/info.json";
 const VERBOSE_AI_LOGS = process.env.LUNEL_DEBUG_AI === "1";
+const PTY_RELEASE_BASE_URL = "https://github.com/lunel-dev/lunel/releases/download/v0";
+const PTY_RELEASES: Record<string, { fileName: string; url: string }> = {
+  "linux:x64": {
+    fileName: "lunel-pty-linux-x8664-0",
+    url: `${PTY_RELEASE_BASE_URL}/lunel-pty-linux-x8664-0`,
+  },
+  "darwin:arm64": {
+    fileName: "lunel-pty-macos-arm64-0",
+    url: `${PTY_RELEASE_BASE_URL}/lunel-pty-macos-arm64-0`,
+  },
+  "win32:x64": {
+    fileName: "lunel-pty-windows-x8664-0.exe",
+    url: `${PTY_RELEASE_BASE_URL}/lunel-pty-windows-x8664-0.exe`,
+  },
+};
 
 // Root directory - sandbox all file operations to this
 const ROOT_DIR = (() => {
@@ -1439,29 +1451,10 @@ async function noteTrackedFileWrite(requestPath: string, source: string | null):
   }
 }
 
-interface PtyReleaseInfo {
-  version: string;
-  windows?: { arm?: string | null; x86?: string | null };
-  linux?: { arm?: string | null; x86?: string | null };
-  macos?: { arm?: string | null; x86?: string | null };
-}
-
-let ensurePtyBinaryPromise: Promise<string> | null = null;
+let ensurePtyBinaryPromise: Promise<string | null> | null = null;
 
 function normalizeJsonWithTrailingCommas(text: string): string {
   return text.replace(/,\s*([}\]])/g, "$1");
-}
-
-function compareSemver(a: string, b: string): number {
-  const aParts = a.split(".").map((part) => Number.parseInt(part, 10) || 0);
-  const bParts = b.split(".").map((part) => Number.parseInt(part, 10) || 0);
-  const max = Math.max(aParts.length, bParts.length);
-  for (let i = 0; i < max; i++) {
-    const left = aParts[i] ?? 0;
-    const right = bParts[i] ?? 0;
-    if (left !== right) return left > right ? 1 : -1;
-  }
-  return 0;
 }
 
 function getLunelConfigDir(): string {
@@ -1477,50 +1470,14 @@ function getLunelConfigDir(): string {
   return path.join(xdg, "lunel");
 }
 
-function getPtyBinaryPath(): string {
-  const binName = os.platform() === "win32" ? "lunel-pty.exe" : "lunel-pty";
-  return path.join(getLunelConfigDir(), "pty-releases", binName);
+function getPtyReleaseTarget(): { fileName: string; url: string } | null {
+  const release = PTY_RELEASES[`${os.platform()}:${os.arch()}`];
+  if (!release) return null;
+  return release;
 }
 
-function getPtyPlatformKey(): "windows" | "linux" | "macos" {
-  const platform = os.platform();
-  if (platform === "win32") return "windows";
-  if (platform === "linux") return "linux";
-  if (platform === "darwin") return "macos";
-  throw new Error(`Unsupported platform for PTY: ${platform}`);
-}
-
-function getPtyArchKey(): "arm" | "x86" {
-  const arch = os.arch();
-  if (arch === "arm64" || arch === "arm") return "arm";
-  if (arch === "x64" || arch === "ia32") return "x86";
-  throw new Error(`Unsupported architecture for PTY: ${arch}`);
-}
-
-async function fetchPtyReleaseInfo(): Promise<PtyReleaseInfo> {
-  const response = await fetch(PTY_RELEASE_INFO_URL);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch PTY release info (${response.status})`);
-  }
-  const raw = await response.text();
-  const parsed = JSON.parse(raw) as PtyReleaseInfo;
-  if (!parsed?.version) {
-    throw new Error("Invalid PTY release info: missing version");
-  }
-  return parsed;
-}
-
-function readInstalledPtyVersion(binPath: string): string | null {
-  try {
-    const output = execFileSync(binPath, ["--version"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const version = output.trim();
-    return version || null;
-  } catch {
-    return null;
-  }
+function getPtyBinaryPath(fileName: string): string {
+  return path.join(getLunelConfigDir(), "pty-releases", fileName);
 }
 
 async function downloadPtyBinary(url: string, destination: string): Promise<void> {
@@ -1555,49 +1512,24 @@ async function downloadPtyBinary(url: string, destination: string): Promise<void
   console.log(`[pty] Downloaded PTY (${Math.max(1, Math.round(totalBytes / 1024))} KB)`);
 }
 
-async function ensurePtyBinaryReady(): Promise<string> {
+async function ensurePtyBinaryReady(): Promise<string | null> {
   if (ensurePtyBinaryPromise) return ensurePtyBinaryPromise;
 
   ensurePtyBinaryPromise = (async () => {
-    const binPath = getPtyBinaryPath();
+    const release = getPtyReleaseTarget();
+    if (!release) return null;
+
+    const binPath = getPtyBinaryPath(release.fileName);
     await fs.mkdir(path.dirname(binPath), { recursive: true });
 
-    const releaseInfo = await fetchPtyReleaseInfo();
-    const platformKey = getPtyPlatformKey();
-    const archKey = getPtyArchKey();
-    const downloadUrl = releaseInfo[platformKey]?.[archKey] || null;
-
-    if (!downloadUrl) {
-      throw new Error(
-        `PTY binary is not available for ${platformKey}/${archKey} in release ${releaseInfo.version}`,
-      );
-    }
-
-    let hasBinary = true;
     try {
       await fs.access(binPath);
+      return binPath;
     } catch {
-      hasBinary = false;
+      console.log(`[pty] PTY missing. Installing ${release.fileName}...`);
+      await downloadPtyBinary(release.url, binPath);
+      return binPath;
     }
-
-    const installedVersion = hasBinary ? readInstalledPtyVersion(binPath) : null;
-    const shouldDownload =
-      !hasBinary ||
-      !installedVersion ||
-      compareSemver(installedVersion, releaseInfo.version) < 0;
-
-    if (!shouldDownload) return binPath;
-
-    if (!hasBinary) {
-      console.log(`[pty] PTY missing. Installing ${releaseInfo.version}...`);
-    } else {
-      console.log(
-        `[pty] PTY outdated (${installedVersion} -> ${releaseInfo.version}). Updating...`,
-      );
-    }
-
-    await downloadPtyBinary(downloadUrl, binPath);
-    return binPath;
   })();
 
   try {
@@ -1611,6 +1543,9 @@ async function ensurePtyProcess(): Promise<void> {
   if (ptyProcess && ptyProcess.exitCode === null) return;
 
   const binPath = await ensurePtyBinaryReady();
+  if (!binPath) {
+    throw new Error(`PTY is not supported on ${os.platform()}/${os.arch()}`);
+  }
   ptyProcess = spawn(binPath, [], {
     cwd: ROOT_DIR,
     stdio: ["pipe", "pipe", "pipe"],
@@ -3521,8 +3456,12 @@ async function main(): Promise<void> {
     const cliConfig = await getCliConfig();
     const savedSession = getSavedSessionForRoot(cliConfig, ROOT_DIR);
     debugLog("Checking PTY runtime...");
-    await ensurePtyBinaryReady();
-    debugLog("PTY runtime ready.\n");
+    const ptyBinaryPath = await ensurePtyBinaryReady();
+    if (ptyBinaryPath) {
+      debugLog("PTY runtime ready.\n");
+    } else {
+      debugLog(`PTY runtime unsupported on ${os.platform()}/${os.arch()}. Skipping prefetch.\n`);
+    }
 
     // Start both AI backends (OpenCode + Codex). Unavailable ones are skipped.
     aiManager = await createAiManager();
