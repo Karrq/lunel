@@ -35,7 +35,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-function SpinningLoader({ color, opacity = 1 }: { color: string; opacity?: number }) {
+function SpinningLoader({ color, opacity = 1, size = 18 }: { color: string; opacity?: number; size?: number }) {
   const rotation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -53,7 +53,7 @@ function SpinningLoader({ color, opacity = 1 }: { color: string; opacity?: numbe
 
   return (
     <Animated.View style={{ transform: [{ rotate }], opacity }}>
-      <LoaderCircle size={15} color={color} strokeWidth={2} />
+      <LoaderCircle size={size} color={color} strokeWidth={2} />
     </Animated.View>
   );
 }
@@ -352,7 +352,7 @@ export default function DrawerContent(props: DrawerContentComponentProps) {
                             })}
                             {isLoading && (
                               <View style={styles.viewAllRow}>
-                                <SpinningLoader color={colors.fg.muted} opacity={0.6} />
+                                <SpinningLoader color={colors.fg.muted} opacity={0.6} size={16} />
                                 <Text style={[styles.viewAllText, { color: colors.fg.muted, fontFamily: fonts.sans.regular, opacity: 0.6 }]}>
                                   Loading...
                                 </Text>

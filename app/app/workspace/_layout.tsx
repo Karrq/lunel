@@ -28,7 +28,8 @@ export default function WorkspaceLayout() {
             width: "80%",
           },
           overlayColor: "rgba(0, 0, 0, 0.5)",
-          swipeEnabled: false,
+          swipeEnabled: true,
+          swipeEdgeWidth: 30,
         }}
       />
     </GestureHandlerRootView>
