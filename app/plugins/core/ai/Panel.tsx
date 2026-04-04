@@ -2649,7 +2649,7 @@ export default function AIPanel({ instanceId, isActive, bottomBarHeight }: Plugi
   }, [activeTab, closeTab]);
 
   const hasContent = listData.length > 0;
-  const messagesBottomInset = isVoiceMode ? 72 : composerHeight + 16;
+  const messagesBottomInset = isVoiceMode ? 72 : composerHeight + 30;
 
   useEffect(() => {
     // Include backend on each session item so DrawerContent can group them
@@ -2829,7 +2829,7 @@ export default function AIPanel({ instanceId, isActive, bottomBarHeight }: Plugi
                 onContentSizeChange={(_, contentHeight) => {
                   contentHeightRef.current = contentHeight;
                   const grew = contentHeight > lastContentHeightRef.current;
-                  if (grew && isStreaming && autoFollowRef.current) {
+                  if (grew && isStreaming && isNearBottomRef.current) {
                     scrollToLatest(true);
                   }
                   lastContentHeightRef.current = contentHeight;
