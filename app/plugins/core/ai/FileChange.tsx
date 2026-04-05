@@ -12,6 +12,7 @@ import { classifyDiffLine, looksLikeDiff, parseDiffChunks } from "./diff";
 
 const DIFF_ADD_COLOR = "#23824d";
 const DIFF_DELETE_COLOR = "#b13a3a";
+const BOX_RADIUS = 8;
 
 function InlineChevronIcon({ size = 14, color = "currentColor", expanded = false }: { size?: number; color?: string; expanded?: boolean }) {
   return (
@@ -77,7 +78,7 @@ export default function FileChange({
           {
             backgroundColor: colors.bg.raised,
             borderColor: colors.bg.raised,
-            borderRadius: radius.md,
+            borderRadius: BOX_RADIUS,
           },
         ]}
       >
@@ -110,6 +111,7 @@ export default function FileChange({
                 fontFamily: fonts.mono.regular,
                 backgroundColor: colors.bg.raised,
                 borderColor: colors.bg.raised,
+                borderRadius: BOX_RADIUS,
               },
             ]}
           >
@@ -127,7 +129,7 @@ export default function FileChange({
         {
           backgroundColor: colors.bg.raised,
           borderColor: colors.bg.raised,
-          borderRadius: radius.md,
+          borderRadius: BOX_RADIUS,
         },
       ]}
     >
@@ -172,7 +174,7 @@ export default function FileChange({
               styles.diffCard,
               {
                 backgroundColor: colors.bg.base,
-                borderRadius: radius.md,
+                borderRadius: BOX_RADIUS,
                 borderColor: colors.bg.raised,
               },
             ]}
@@ -289,8 +291,8 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   fallbackText: {
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 18,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderTopWidth: 1,

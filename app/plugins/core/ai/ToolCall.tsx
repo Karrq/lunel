@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,35 +7,40 @@ import {
   View,
 } from "react-native";
 import Svg, { Path } from "react-native-svg";
-import {
-  Check,
-  X,
-} from "lucide-react-native";
+import { Terminal, Wrench } from "lucide-react-native";
 import type { AIPart, AIPermission, PermissionResponse } from "./types";
 import { looksLikeDiff, parseDiffChunks, classifyDiffLine } from "./diff";
 
-function ToolIcon({ size = 14, color = "currentColor" }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M7 10h3V7L6.5 3.5a6 6 0 0 1 8 8l6 6a2 2 0 0 1-3 3l-6-6a6 6 0 0 1-8-8z" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-function DollarIcon({ size = 14, color = "currentColor" }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M12 2v20" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
+const BOX_RADIUS = 8;
 
 function InlineChevronIcon({ size = 14, color = "currentColor", expanded = false }: { size?: number; color?: string; expanded?: boolean }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={expanded ? { transform: [{ rotate: "90deg" }] } : undefined}>
       <Path d="m9 6l6 6l-6 6" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
+  );
+}
+
+function IconBadge({
+  children,
+  colors,
+}: {
+  children: React.ReactNode;
+  colors: any;
+}) {
+  return (
+    <View
+      style={[
+        styles.iconBadge,
+        {
+          backgroundColor: colors.bg.raised,
+          borderColor: colors.bg.raised,
+          borderRadius: 6,
+        },
+      ]}
+    >
+      {children}
+    </View>
   );
 }
 
@@ -136,7 +140,7 @@ function DiffViewer({
         return (
           <View
             key={chunk.id}
-            style={[styles.diffCard, { backgroundColor: colors.bg.base, borderRadius: radius.md, borderColor: colors.bg.raised }]}
+            style={[styles.diffCard, { backgroundColor: colors.bg.base, borderRadius: BOX_RADIUS, borderColor: colors.bg.raised }]}
           >
             <TouchableOpacity
               onPress={() => {
@@ -241,6 +245,7 @@ interface ToolCallProps {
   radius: any;
   permission?: AIPermission | null;
   onPermissionReply?: (response: PermissionResponse) => void;
+  compactCommandRow?: boolean;
 }
 
 export default function ToolCall({
@@ -250,6 +255,7 @@ export default function ToolCall({
   radius,
   permission,
   onPermissionReply,
+  compactCommandRow = false,
 }: ToolCallProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -259,19 +265,17 @@ export default function ToolCall({
   const headerLabel = commandPreview || toolName;
   const state = (part.state as string) || "running";
 
+  const isError = state === "error";
+  const isCompleted = state === "completed";
   const inputText = isCommandRow ? null : formatToolInput(part.input, toolName);
   const outputText = formatToolOutput(part.output);
   const showDiffViewer = !!outputText && looksLikeDiff(outputText);
-  const shouldRenderBody = Boolean(
+  const canExpand = Boolean(
     inputText
     || outputText
     || (isError && part.error != null)
     || permission
   );
-
-  const isRunning = state === "running" || state === "pending";
-  const isError = state === "error";
-  const isCompleted = state === "completed";
 
   const statusColor = isError
     ? '#ef4444'
@@ -283,24 +287,30 @@ export default function ToolCall({
     <View style={styles.container}>
       {/* Header */}
       <TouchableOpacity
-        onPress={() => setExpanded(!expanded)}
-        style={[styles.header, isCommandRow && expanded ? styles.headerExpandedTop : undefined]}
-        activeOpacity={0.7}
+        onPress={canExpand ? () => setExpanded(!expanded) : undefined}
+        style={[
+          styles.header,
+          isCommandRow && expanded ? styles.headerExpandedTop : undefined,
+          isCommandRow && compactCommandRow ? styles.compactCommandHeader : undefined,
+        ]}
+        activeOpacity={canExpand ? 0.7 : 1}
       >
         <View style={[styles.headerLeft, isCommandRow && expanded ? styles.headerLeftTop : undefined]}>
           {isCommandRow ? (
             <View
               style={[
                 styles.commandPill,
+                compactCommandRow ? styles.commandPillCompact : undefined,
                 expanded ? styles.commandPillTop : undefined,
                 {
                   backgroundColor: colors.bg.base,
-                  borderColor: colors.bg.raised,
-                  borderRadius: radius.md,
+                  borderRadius: BOX_RADIUS,
                 },
               ]}
             >
-              <DollarIcon size={13} color={colors.fg.muted} />
+              <IconBadge colors={colors}>
+                <Terminal size={12} color={colors.fg.muted} strokeWidth={2} />
+              </IconBadge>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -320,14 +330,9 @@ export default function ToolCall({
             </View>
           ) : (
             <>
-              {isRunning ? (
-                <ActivityIndicator size={14} color={colors.accent.default} />
-              ) : isError ? (
-                <X size={14} color={'#ef4444'} strokeWidth={2.5} />
-              ) : (
-                <Check size={14} color={'#22c55e'} strokeWidth={2.5} />
-              )}
-              <ToolIcon size={14} color={colors.fg.muted} />
+              <IconBadge colors={colors}>
+                <Wrench size={12} color={colors.fg.muted} strokeWidth={2} />
+              </IconBadge>
               <Text
                 style={[
                   styles.toolName,
@@ -339,24 +344,24 @@ export default function ToolCall({
               </Text>
             </>
           )}
-          <InlineChevronIcon size={14} color={colors.fg.muted} expanded={expanded} />
+          {canExpand ? <InlineChevronIcon size={14} color={colors.fg.muted} expanded={expanded} /> : null}
         </View>
       </TouchableOpacity>
 
       {/* Expanded body */}
-      {expanded && shouldRenderBody && (
+      {expanded && canExpand && (
         <View
           style={[
             styles.body,
-            {
-              borderWidth: 1,
-              borderColor: colors.bg.raised,
-              borderLeftWidth: isCommandRow ? 1 : 3,
-              borderLeftColor: isCommandRow ? colors.bg.raised : statusColor,
-              borderRadius: radius.sm,
-              backgroundColor: colors.bg.raised,
-            },
-          ]}
+              {
+                borderWidth: isCommandRow ? 0 : 1,
+                borderColor: colors.bg.raised,
+                borderLeftWidth: isCommandRow ? 0 : 3,
+                borderLeftColor: isCommandRow ? colors.bg.raised : statusColor,
+                borderRadius: BOX_RADIUS,
+                backgroundColor: colors.bg.raised,
+              },
+            ]}
         >
           {/* Input */}
           {!isCommandRow && inputText && (
@@ -364,15 +369,22 @@ export default function ToolCall({
               <Text style={[styles.sectionLabel, { color: colors.fg.subtle, fontFamily: fonts.sans.medium }]}>
                 Input
               </Text>
-              <Text
+              <View
                 style={[
-                  styles.sectionContent,
-                  { color: colors.fg.muted, fontFamily: fonts.mono.regular, backgroundColor: colors.bg.base, borderRadius: radius.sm },
+                  styles.monoBox,
+                  { backgroundColor: colors.bg.base, borderRadius: BOX_RADIUS },
                 ]}
-                selectable
               >
-                {inputText}
-              </Text>
+                <Text
+                  style={[
+                    styles.sectionContent,
+                    { color: colors.fg.muted, fontFamily: fonts.mono.regular },
+                  ]}
+                  selectable
+                >
+                  {inputText}
+                </Text>
+              </View>
             </View>
           )}
 
@@ -385,22 +397,29 @@ export default function ToolCall({
               {showDiffViewer ? (
                 <DiffViewer outputText={outputText} colors={colors} fonts={fonts} radius={radius} />
               ) : (
-                <Text
+                <View
                   style={[
-                    styles.sectionContent,
-                    { color: colors.fg.muted, fontFamily: fonts.mono.regular, backgroundColor: colors.bg.base, borderRadius: radius.sm },
+                    styles.monoBox,
+                    { backgroundColor: colors.bg.base, borderRadius: BOX_RADIUS },
                   ]}
-                  selectable
                 >
-                  {outputText}
-                </Text>
+                  <Text
+                    style={[
+                      styles.sectionContent,
+                      { color: colors.fg.muted, fontFamily: fonts.mono.regular },
+                    ]}
+                    selectable
+                  >
+                    {outputText}
+                  </Text>
+                </View>
               )}
             </View>
           )}
 
           {/* Error */}
           {isError && part.error != null && (
-            <View style={[styles.errorBlock, { backgroundColor: '#ef444420', borderRadius: radius.sm }]}>
+            <View style={[styles.errorBlock, { backgroundColor: '#ef444420', borderRadius: BOX_RADIUS }]}>
               <Text style={{ color: '#ef4444', fontFamily: fonts.mono.regular, fontSize: 11 }}>
                 {String(part.error)}
               </Text>
@@ -409,7 +428,7 @@ export default function ToolCall({
 
           {/* Inline Permission */}
           {permission && (
-            <View style={[styles.permissionBlock, { backgroundColor: colors.bg.raised, borderRadius: radius.sm }]}>
+            <View style={[styles.permissionBlock, { backgroundColor: colors.bg.raised, borderRadius: BOX_RADIUS }]}>
               <Text style={{ color: colors.fg.default, fontSize: 12, fontFamily: fonts.sans.medium, marginBottom: 6 }}>
                 Permission Required
               </Text>
@@ -419,21 +438,21 @@ export default function ToolCall({
               <View style={styles.permissionButtons}>
                 <TouchableOpacity
                   onPress={() => onPermissionReply?.("reject")}
-                  style={[styles.permButton, { backgroundColor: colors.bg.raised, borderRadius: radius.sm }]}
+                  style={[styles.permButton, { backgroundColor: colors.bg.raised, borderRadius: BOX_RADIUS }]}
                   activeOpacity={0.7}
                 >
                   <Text style={{ color: colors.fg.default, fontSize: 12, fontFamily: fonts.sans.medium }}>Deny</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => onPermissionReply?.("always")}
-                  style={[styles.permButton, { backgroundColor: colors.bg.raised, borderRadius: radius.sm }]}
+                  style={[styles.permButton, { backgroundColor: colors.bg.raised, borderRadius: BOX_RADIUS }]}
                   activeOpacity={0.7}
                 >
                   <Text style={{ color: colors.fg.default, fontSize: 12, fontFamily: fonts.sans.medium }}>Always</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => onPermissionReply?.("once")}
-                  style={[styles.permButton, { backgroundColor: colors.accent.default, borderRadius: radius.sm }]}
+                  style={[styles.permButton, { backgroundColor: colors.accent.default, borderRadius: BOX_RADIUS }]}
                   activeOpacity={0.7}
                 >
                   <Text style={{ color: '#ffffff', fontSize: 12, fontFamily: fonts.sans.medium }}>Allow</Text>
@@ -458,6 +477,10 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     gap: 8,
   },
+  compactCommandHeader: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
@@ -470,15 +493,29 @@ const styles = StyleSheet.create({
   headerLeftTop: {
     alignItems: "flex-start",
   },
+  iconBadge: {
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    flexShrink: 0,
+  },
   commandPill: {
     flex: 1,
     minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    borderWidth: 1,
+    borderWidth: 0,
     paddingHorizontal: 10,
     paddingVertical: 7,
+    overflow: "hidden",
+  },
+  commandPillCompact: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    paddingLeft: 8,
   },
   commandPillTop: {
     alignItems: "flex-start",
@@ -540,9 +577,12 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
+  monoBox: {
+    overflow: "hidden",
+  },
   sectionContent: {
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 18,
     padding: 8,
   },
   errorBlock: {

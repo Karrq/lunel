@@ -15,7 +15,7 @@ import FileChange from "./FileChange";
 import {
   Sparkle, Sparkles, Check, X, Plus,
   Hammer, Map as MapIcon, Square, AlertTriangle, Key,
-  EllipsisVertical, ChevronDown, Mic, LoaderCircle,
+  EllipsisVertical, ChevronDown, Mic, LoaderCircle, SquaresSubtract,
 } from "lucide-react-native";
 import { Canvas, Circle } from "@shopify/react-native-skia";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -247,6 +247,73 @@ function formatVoiceDuration(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function mergeStreamingText(previous: string, incoming: string): string {
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+
+  if (incoming.startsWith(previous)) {
+    return incoming;
+  }
+  if (previous.startsWith(incoming)) {
+    return previous;
+  }
+
+  const maxOverlap = Math.min(previous.length, incoming.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (previous.slice(-overlap) === incoming.slice(0, overlap)) {
+      return previous + incoming.slice(overlap);
+    }
+  }
+
+  return previous + incoming;
+}
+
+function findStreamingPartIndex(parts: AIPart[], incoming: AIPart): number {
+  const incomingType = incoming.type;
+
+  if (incomingType === "text" || incomingType === "reasoning") {
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
+      const candidate = parts[i];
+      if (candidate.type === incomingType && !(candidate as any).id) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  if (incomingType === "tool" || incomingType === "tool-call" || incomingType === "tool-result" || incomingType === "file-change") {
+    const incomingName = String(incoming.name || incoming.toolName || "");
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
+      const candidate = parts[i];
+      if (candidate.type !== incomingType) continue;
+      if ((candidate as any).id) continue;
+      const candidateName = String(candidate.name || candidate.toolName || "");
+      if (candidateName === incomingName) {
+        return i;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function mergePartUpdate(previous: AIPart, incoming: AIPart): AIPart {
+  if ((incoming.type === "text" || incoming.type === "reasoning")
+      && typeof previous.text === "string"
+      && typeof incoming.text === "string") {
+    return {
+      ...previous,
+      ...incoming,
+      text: mergeStreamingText(previous.text, incoming.text),
+    };
+  }
+
+  return {
+    ...previous,
+    ...incoming,
+  };
 }
 
 function readMetadataString(
@@ -603,6 +670,57 @@ function deriveActivityLabelFromPart(part: AIPart): string | null {
   return "Working...";
 }
 
+type MessageDisplayItem =
+  | { kind: "part"; key: string; part: AIPart }
+  | { kind: "command-group"; key: string; parts: AIPart[] };
+
+function isCommandToolPart(part: AIPart): boolean {
+  if (part.type !== "tool" && part.type !== "tool-call" && part.type !== "tool-result") return false;
+  const toolName = String(part.name || part.toolName || "").trim().toLowerCase();
+  return toolName === "command";
+}
+
+function buildMessageDisplayItems(parts: AIPart[]): MessageDisplayItem[] {
+  const commandIndices: number[] = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    if (isCommandToolPart(parts[i])) commandIndices.push(i);
+  }
+
+  if (commandIndices.length <= 2) {
+    return parts.map((part, i) => ({
+      kind: "part",
+      key: String((part as any).id || `part-${i}`),
+      part,
+    }));
+  }
+
+  const commandIndexSet = new Set(commandIndices);
+  const firstCommandIndex = commandIndices[0];
+  const commandParts = commandIndices.map((index) => parts[index]);
+  const items: MessageDisplayItem[] = [];
+
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i === firstCommandIndex) {
+      items.push({
+        kind: "command-group",
+        key: `command-group-${String((parts[i] as any).id || i)}`,
+        parts: commandParts,
+      });
+      continue;
+    }
+
+    if (commandIndexSet.has(i)) continue;
+    const part = parts[i];
+    items.push({
+      kind: "part",
+      key: String((part as any).id || `part-${i}`),
+      part,
+    });
+  }
+
+  return items;
+}
+
 // ============================================================================
 // Message Bubble
 // ============================================================================
@@ -626,6 +744,7 @@ function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const parts = message.parts || [];
+  const displayItems = useMemo(() => buildMessageDisplayItems(parts), [parts]);
 
   const handleCopy = async () => {
     const text = parts
@@ -671,18 +790,33 @@ function MessageBubble({
       activeOpacity={1}
       style={styles.assistantMessage}
     >
-      {parts.map((part, i) => (
-        <View key={i} style={i > 0 ? getMessagePartSpacingStyle(parts[i - 1], part, styles) : undefined}>
-          <MessagePartView
-            part={part}
-            isUser={false}
-            colors={colors}
-            fonts={fonts}
-            radius={radius}
-            showDetailedView={showDetailedView}
-            pendingPermission={pendingPermission}
-            onPermissionReply={onPermissionReply}
-          />
+      {displayItems.map((item, i) => (
+        <View
+          key={item.key}
+          style={i > 0 ? getDisplayItemSpacingStyle(displayItems[i - 1], item, styles) : undefined}
+        >
+          {item.kind === "command-group" ? (
+            <CommandPartsDropdown
+              commandParts={item.parts}
+              colors={colors}
+              fonts={fonts}
+              radius={radius}
+              showDetailedView={showDetailedView}
+              pendingPermission={pendingPermission}
+              onPermissionReply={onPermissionReply}
+            />
+          ) : (
+            <MessagePartView
+              part={item.part}
+              isUser={false}
+              colors={colors}
+              fonts={fonts}
+              radius={radius}
+              showDetailedView={showDetailedView}
+              pendingPermission={pendingPermission}
+              onPermissionReply={onPermissionReply}
+            />
+          )}
         </View>
       ))}
     </TouchableOpacity>
@@ -708,6 +842,77 @@ function partHasTextOutput(part: AIPart) {
     return part.output.trim().length > 0;
   }
   return false;
+}
+
+function getDisplayItemSpacingStyle(previous: MessageDisplayItem, current: MessageDisplayItem, styles: any) {
+  const previousHasTextOutput = itemHasTextOutput(previous);
+  const currentHasTextOutput = itemHasTextOutput(current);
+
+  if (previousHasTextOutput || currentHasTextOutput) {
+    return styles.messagePartSpacingLoose;
+  }
+
+  return styles.messagePartSpacingTight;
+}
+
+function itemHasTextOutput(item: MessageDisplayItem) {
+  if (item.kind === "command-group") return false;
+  return partHasTextOutput(item.part);
+}
+
+function CommandPartsDropdown({
+  commandParts,
+  colors,
+  fonts,
+  radius,
+  showDetailedView,
+  pendingPermission,
+  onPermissionReply,
+}: {
+  commandParts: AIPart[];
+  colors: any;
+  fonts: any;
+  radius: any;
+  showDetailedView: boolean;
+  pendingPermission?: AIPermission | null;
+  onPermissionReply?: (response: PermissionResponse) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View style={styles.commandGroupContainer}>
+      <TouchableOpacity
+        onPress={() => setExpanded((value) => !value)}
+        activeOpacity={0.7}
+        style={[styles.commandGroupHeader, { backgroundColor: colors.bg.raised, borderRadius: 8 }]}
+      >
+        <View style={styles.commandGroupHeaderLeft}>
+          <SquaresSubtract size={13} color={colors.fg.muted} strokeWidth={2} />
+          <Text style={{ color: colors.fg.muted, fontSize: 12, fontFamily: fonts.mono.regular }}>
+            {commandParts.length} commands
+          </Text>
+        </View>
+        <InlineChevronIcon size={14} color={colors.fg.muted} expanded={expanded} />
+      </TouchableOpacity>
+      {expanded ? (
+        <View style={styles.commandGroupBody}>
+          {commandParts.map((part, index) => (
+            <View key={String((part as any).id || `command-part-${index}`)} style={index > 0 ? styles.commandGroupItemSpacing : undefined}>
+              <ToolCall
+                part={part}
+                colors={colors}
+                fonts={fonts}
+                radius={radius}
+                permission={pendingPermission}
+                onPermissionReply={onPermissionReply}
+                compactCommandRow
+              />
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 function MessagePartView({
@@ -1739,10 +1944,14 @@ export default function AIPanel({ instanceId, isActive, bottomBarHeight }: Plugi
               if (msgIdx >= 0) {
                 const updated = [...existing];
                 const msg = { ...updated[msgIdx], parts: [...(updated[msgIdx].parts || [])] };
-                // Match by part id if available, otherwise append
-                const existingPartIdx = partId ? msg.parts.findIndex((p) => (p as any).id === partId) : -1;
+                // Match by part id when available. Some streaming backends send
+                // partial updates without stable ids; in that case merge by type
+                // so we don't render noisy chunk-by-chunk duplicates.
+                const existingPartIdx = partId
+                  ? msg.parts.findIndex((p) => (p as any).id === partId)
+                  : findStreamingPartIndex(msg.parts, part);
                 if (existingPartIdx >= 0) {
-                  msg.parts[existingPartIdx] = part;
+                  msg.parts[existingPartIdx] = mergePartUpdate(msg.parts[existingPartIdx], part);
                 } else {
                   msg.parts.push(part);
                 }
@@ -3436,6 +3645,27 @@ const styles = StyleSheet.create({
   },
   messagePartSpacingTight: {
     marginTop: 0,
+  },
+  commandGroupContainer: {
+    gap: 8,
+  },
+  commandGroupHeader: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  commandGroupHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  commandGroupBody: {
+    gap: 6,
+  },
+  commandGroupItemSpacing: {
+    marginTop: 6,
   },
 
   // Reasoning

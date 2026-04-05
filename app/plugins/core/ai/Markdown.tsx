@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useEditorConfig } from "@/contexts/EditorContext";
 import RNMarkdown from "react-native-markdown-display";
@@ -13,24 +13,27 @@ import { Copy, Check } from "lucide-react-native";
 
 const AI_READING_LINE_HEIGHT = 1.45;
 const AI_READING_LETTER_SPACING = 0.12;
+const BOX_RADIUS = 8;
 
-function CopyButton({ text, colors, radius }: { text: string; colors: any; radius: any }) {
-  const [copied, setCopied] = React.useState(false);
-
-  const handleCopy = async () => {
-    await Clipboard.setStringAsync(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
+function CopyButton({
+  copied,
+  onCopy,
+  colors,
+  radius,
+}: {
+  copied: boolean;
+  onCopy: () => void;
+  colors: any;
+  radius: any;
+}) {
   return (
     <TouchableOpacity
-      onPress={handleCopy}
+      onPress={onCopy}
       style={[styles.copyButton, { backgroundColor: colors.bg.raised, borderRadius: radius.sm }]}
       activeOpacity={0.7}
     >
       {copied ? (
-        <Check size={12} color={'#22c55e'} strokeWidth={2} />
+        <Check size={12} color={colors.fg.muted} strokeWidth={2} />
       ) : (
         <Copy size={12} color={colors.fg.muted} strokeWidth={2} />
       )}
@@ -41,9 +44,31 @@ function CopyButton({ text, colors, radius }: { text: string; colors: any; radiu
 export default function Markdown({ children, compact = false }: { children: string; compact?: boolean }) {
   const { colors, radius, fonts } = useTheme();
   const { config } = useEditorConfig();
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bodyFontSize = compact ? 13 : config.aiFontSize;
   const bodyLineHeight = compact ? 19 : Math.round(config.aiFontSize * AI_READING_LINE_HEIGHT);
   const headingScale = compact ? 0.9 : 1;
+
+  useEffect(() => () => {
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+  }, []);
+
+  const handleCopy = useCallback(async (id: string, text: string) => {
+    await Clipboard.setStringAsync(text);
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    setCopiedId(id);
+    resetTimerRef.current = setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1000);
+  }, []);
+
+  const makeCopyId = useCallback((prefix: string, content: string) => {
+    const head = content.slice(0, 48);
+    return `${prefix}:${content.length}:${head}`;
+  }, []);
 
   const markdownStyles = useMemo(
     () => ({
@@ -132,10 +157,10 @@ export default function Markdown({ children, compact = false }: { children: stri
         backgroundColor: colors.bg.raised,
         color: colors.fg.default,
         fontFamily: fonts.mono.regular,
-        fontSize: 15,
+        fontSize: 12,
         paddingHorizontal: 5,
         paddingVertical: 1,
-        borderRadius: radius.sm,
+        borderRadius: BOX_RADIUS,
       },
       code_block: {
         backgroundColor: colors.bg.raised,
@@ -144,7 +169,7 @@ export default function Markdown({ children, compact = false }: { children: stri
         fontSize: 12,
         lineHeight: 18,
         padding: 12,
-        borderRadius: radius.sm,
+        borderRadius: BOX_RADIUS,
         borderWidth: 1,
         borderColor: colors.bg.raised,
         marginVertical: 6,
@@ -156,7 +181,7 @@ export default function Markdown({ children, compact = false }: { children: stri
         fontSize: 12,
         lineHeight: 18,
         padding: 12,
-        borderRadius: radius.sm,
+        borderRadius: BOX_RADIUS,
         borderWidth: 1,
         borderColor: colors.bg.raised,
         marginVertical: 6,
@@ -231,6 +256,7 @@ export default function Markdown({ children, compact = false }: { children: stri
       ) => {
         const code = node.content || "";
         const lang = node.sourceInfo || "";
+        const copyId = makeCopyId(`fence:${lang || "plain"}`, code);
         return (
           <View
             key={node.key}
@@ -238,7 +264,7 @@ export default function Markdown({ children, compact = false }: { children: stri
               styles.codeBlockContainer,
               {
                 backgroundColor: colors.bg.raised,
-                borderRadius: radius.sm,
+                borderRadius: BOX_RADIUS,
                 borderWidth: 1,
                 borderColor: colors.bg.raised,
                 marginVertical: 6,
@@ -261,7 +287,12 @@ export default function Markdown({ children, compact = false }: { children: stri
               ) : (
                 <View />
               )}
-              <CopyButton text={code} colors={colors} radius={radius} />
+              <CopyButton
+                copied={copiedId === copyId}
+                onCopy={() => { void handleCopy(copyId, code); }}
+                colors={colors}
+                radius={radius}
+              />
             </View>
             {/* Code content */}
             <Text
@@ -286,6 +317,7 @@ export default function Markdown({ children, compact = false }: { children: stri
         mdStyles: any,
       ) => {
         const code = node.content || "";
+        const copyId = makeCopyId("code_block", code);
         return (
           <View
             key={node.key}
@@ -293,7 +325,7 @@ export default function Markdown({ children, compact = false }: { children: stri
               styles.codeBlockContainer,
               {
                 backgroundColor: colors.bg.raised,
-                borderRadius: radius.sm,
+                borderRadius: BOX_RADIUS,
                 borderWidth: 1,
                 borderColor: colors.bg.raised,
                 marginVertical: 6,
@@ -302,7 +334,12 @@ export default function Markdown({ children, compact = false }: { children: stri
           >
             <View style={[styles.codeBlockHeader, { borderBottomColor: colors.bg.raised }]}>
               <View />
-              <CopyButton text={code} colors={colors} radius={radius} />
+              <CopyButton
+                copied={copiedId === copyId}
+                onCopy={() => { void handleCopy(copyId, code); }}
+                colors={colors}
+                radius={radius}
+              />
             </View>
             <Text
               style={{
@@ -320,7 +357,7 @@ export default function Markdown({ children, compact = false }: { children: stri
         );
       },
     }),
-    [colors, radius, fonts]
+    [colors, radius, fonts, copiedId, handleCopy, makeCopyId]
   );
 
   if (!children || children.trim() === "") return null;
