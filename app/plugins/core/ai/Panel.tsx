@@ -43,6 +43,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
+  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
@@ -526,6 +527,33 @@ function StepFinishView({ part, showDetailedView }: { part: AIPart; showDetailed
   );
 }
 
+
+function PulsingDots({ color }: { color: string }) {
+  const opacity = useSharedValue(0.08);
+
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.85, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.08, { duration: 1000, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      false
+    );
+  }, []);
+
+  const s = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const dot = { width: 4, height: 4, borderRadius: 2, backgroundColor: color, marginHorizontal: 1.5 };
+
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, marginRight: 4 }}>
+      <Animated.View style={[dot, s]} />
+      <Animated.View style={[dot, s]} />
+      <Animated.View style={[dot, s]} />
+    </View>
+  );
+}
+
 function ErrorMessageView({ text }: { text: string }) {
   const { colors, fonts, radius } = useTheme();
   return (
@@ -766,9 +794,12 @@ function MessageBubble({
   };
 
   if (isUser) {
-    const isSending = message.id.startsWith("opt-");
-    const sentTime = !isSending ? (message.time?.created ?? message.time?.updated) : undefined;
-    const timeLabel = isSending ? "sending..." : sentTime != null ? formatClockTime(sentTime) : null;
+    const localStatus = typeof message.metadata?.localStatus === "string" ? message.metadata.localStatus : undefined;
+    const isSending = localStatus === "sending" || (localStatus == null && message.id.startsWith("opt-"));
+    const sentTime = !isSending
+      ? (message.time?.created ?? message.time?.updated ?? (typeof message.metadata?.clientCreatedAt === "number" ? message.metadata.clientCreatedAt : undefined))
+      : undefined;
+    const timeLabel = !isSending && sentTime != null ? formatClockTime(sentTime) : null;
     return (
       <View style={{ alignSelf: "flex-end", alignItems: "flex-end", marginVertical: 7 }}>
         <TouchableOpacity
@@ -795,7 +826,9 @@ function MessageBubble({
             </View>
           ))}
         </TouchableOpacity>
-        {timeLabel ? (
+        {isSending ? (
+          <PulsingDots color={colors.fg.subtle} />
+        ) : timeLabel ? (
           <Text style={{ color: colors.fg.subtle, fontFamily: fonts.mono.regular, fontSize: 11, marginTop: 4, marginRight: 2 }}>
             {timeLabel}
           </Text>
@@ -1838,6 +1871,7 @@ export default function AIPanel({ instanceId, isActive, bottomBarHeight }: Plugi
   const [inputFocused, setInputFocused] = useState(false);
   const [pendingImage, setPendingImage] = useState<AIFileAttachment | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingSessionId, setStreamingSessionId] = useState<string | null>(null);
   const [pendingPermission, setPendingPermission] = useState<AIPermission | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<AIQuestion | null>(null);
   const [activeSheet, setActiveSheet] = useState<ComposerSheet>(null);
@@ -2069,6 +2103,8 @@ export default function AIPanel({ instanceId, isActive, bottomBarHeight }: Plugi
           const normalized = (statusType || "").toLowerCase();
           const streaming = normalized === "busy" || normalized === "running" || normalized === "working";
           setIsStreaming(streaming);
+          if (streaming && sessId) setStreamingSessionId(sessId);
+          if (!streaming) setStreamingSessionId(null);
           if (sessId && streaming) {
             setSessionActivityLabels((prev) => {
               const current = prev[sessId];
@@ -2717,6 +2753,7 @@ const selectedModelNameFull = modelOptions.find((m) => m.id === selectedModel)?.
             await ai.sendPrompt(sessId, text, getModelRef(), selectedAgentForBackend, activeBackend);
             setSessionActivityLabels((prev) => ({ ...prev, [sessId]: "Thinking..." }));
             setIsStreaming(true);
+            setStreamingSessionId(sessId);
         }
       } catch (err) {
         Alert.alert("Error", (err as Error).message);
@@ -2727,6 +2764,7 @@ const selectedModelNameFull = modelOptions.find((m) => m.id === selectedModel)?.
     // Regular prompt
     try {
       const optimisticMessageId = `opt-${Date.now()}`;
+      const optimisticCreatedAt = Date.now();
       const optimisticParts: AIPart[] = [];
       if (pendingImage) {
         optimisticParts.push({
@@ -2743,6 +2781,14 @@ const selectedModelNameFull = modelOptions.find((m) => m.id === selectedModel)?.
         id: optimisticMessageId,
         role: "user",
         parts: optimisticParts,
+        metadata: {
+          localStatus: "sending",
+          clientCreatedAt: optimisticCreatedAt,
+        },
+        time: {
+          created: optimisticCreatedAt,
+          updated: optimisticCreatedAt,
+        },
       };
       autoFollowRef.current = true;
       isNearBottomRef.current = true;
@@ -2761,8 +2807,27 @@ const selectedModelNameFull = modelOptions.find((m) => m.id === selectedModel)?.
         activeBackend,
         pendingImage ? [pendingImage] : undefined,
       );
+      setMessagesMap((prev) => {
+        const sessionMessages = prev[sessId!] || [];
+        const idx = sessionMessages.findIndex((m) => m.id === optimisticMessageId);
+        if (idx < 0) return prev;
+        const updated = [...sessionMessages];
+        const existing = updated[idx];
+        const committedAt = existing.time?.created ?? existing.time?.updated ?? optimisticCreatedAt;
+        updated[idx] = {
+          ...existing,
+          metadata: {
+            ...(existing.metadata || {}),
+            localStatus: "sent",
+            clientCreatedAt: committedAt,
+          },
+          time: existing.time ?? { created: committedAt, updated: committedAt },
+        };
+        return { ...prev, [sessId!]: updated };
+      });
       setSessionActivityLabels((prev) => ({ ...prev, [sessId]: "Thinking..." }));
       setIsStreaming(true);
+      setStreamingSessionId(sessId);
       setPendingImage(null);
     } catch (err) {
       if (sessId) {
@@ -2955,7 +3020,7 @@ const selectedModelNameFull = modelOptions.find((m) => m.id === selectedModel)?.
     for (const msg of currentMessages) {
       items.push({ type: "message", data: msg });
     }
-    const shouldShowThinking = isStreaming;
+    const shouldShowThinking = isStreaming && streamingSessionId === activeSessionId;
     if (shouldShowThinking) {
       items.push({ type: "thinking", id: "thinking-indicator", label: activeSessionActivityLabel });
     }
@@ -2963,7 +3028,7 @@ const selectedModelNameFull = modelOptions.find((m) => m.id === selectedModel)?.
       items.push({ type: "error", data: currentErrors[i], id: `err-${i}` });
     }
     return items;
-  }, [currentMessages, currentErrors, isStreaming, activeSessionActivityLabel]);
+  }, [currentMessages, currentErrors, isStreaming, streamingSessionId, activeSessionId, activeSessionActivityLabel]);
 
   // Tab renderer
   const renderAITab = useCallback(

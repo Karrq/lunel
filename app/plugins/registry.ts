@@ -6,9 +6,6 @@ class PluginRegistry {
 
   // Register a new plugin
   register<T extends PluginAPI>(plugin: PluginDefinition<T>): void {
-    if (this.plugins.has(plugin.id)) {
-      return;
-    }
     this.plugins.set(plugin.id, plugin as PluginDefinition);
   }
 

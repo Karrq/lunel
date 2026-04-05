@@ -69,7 +69,7 @@ const HIDE_SIDEBAR_SESSION_PLUGIN_IDS = new Set([
 ]);
 
 export default function DrawerContent(props: DrawerContentComponentProps) {
-  const { colors, fonts } = useTheme();
+  const { colors, fonts, isDark } = useTheme();
   const { status, disconnect } = useConnection();
   const { activeTabId: activePluginTabId, openTabs, getPlugin, openTab } = usePlugins();
   const { registry } = useSessionRegistry();
@@ -382,11 +382,23 @@ export default function DrawerContent(props: DrawerContentComponentProps) {
         ) : (
           <View style={[styles.sessionsSection, { justifyContent: 'flex-start' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, gap: 12 }}>
-              <Image
-                source={require('@/assets/images/icon.png')}
-                style={{ width: 56, height: 56, borderRadius: 14 }}
-                resizeMode="contain"
-              />
+              <View
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 14,
+                  backgroundColor: isDark ? "#FFFFFF" : "#000000",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                }}
+              >
+                <Image
+                  source={require('@/assets/images/icon-bg.png')}
+                  style={{ width: 56, height: 56, borderRadius: 14 }}
+                  resizeMode="contain"
+                />
+              </View>
               <View style={{ justifyContent: 'center' }}>
                 <Text style={{ fontSize: 20, fontFamily: 'PublicSans_700Bold', color: colors.fg.default, lineHeight: 26 }}>
                   Lunel

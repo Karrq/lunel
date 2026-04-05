@@ -4,11 +4,11 @@ import SearchPanel from './Panel';
 
 registerPlugin({
   id: 'search',
-  name: 'Search',
+  name: 'Codebase Search',
   type: 'extra',
   icon: Search,
   component: SearchPanel,
-  defaultTitle: 'Search',
+  defaultTitle: 'Codebase Search',
   allowMultipleInstances: true,
 });
 

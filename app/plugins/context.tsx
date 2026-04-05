@@ -110,10 +110,13 @@ export function PluginProvider({ children }: { children: ReactNode }) {
         if (savedWorkspace) {
           try {
             const parsed: WorkspaceState = JSON.parse(savedWorkspace);
-            // Validate tabs - ensure core plugins exist
-            const validTabs = parsed.openTabs.filter(tab =>
-              pluginRegistry.has(tab.pluginId)
-            );
+            // Validate tabs - ensure core plugins exist, and refresh titles from registry
+            const validTabs = parsed.openTabs
+              .filter(tab => pluginRegistry.has(tab.pluginId))
+              .map(tab => {
+                const plugin = pluginRegistry.get(tab.pluginId);
+                return { ...tab, title: plugin?.defaultTitle || plugin?.name || tab.title };
+              });
 
             // Ensure all core plugins have at least one tab
             const coreTabPluginIds = new Set(
