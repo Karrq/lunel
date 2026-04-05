@@ -826,9 +826,9 @@ const TerminalToolbar = memo(
       pressed: boolean;
       active?: boolean;
     }) => ({
-      width: 42,
-      height: 42,
-      borderRadius: 9,
+      width: 38,
+      height: 38,
+      borderRadius: 8,
       alignItems: "center" as const,
       justifyContent: "center" as const,
       backgroundColor: pressed
@@ -867,7 +867,7 @@ const TerminalToolbar = memo(
                 justifyContent: "center",
               }}
             >
-              <KeyboardIcon size={22} color={colors.fg.muted} strokeWidth={2} />
+              <KeyboardIcon size={18} color={colors.fg.muted} strokeWidth={2} />
             </TouchableOpacity>
           </View>
         )}
@@ -1077,7 +1077,7 @@ const TerminalToolbar = memo(
                 }
               >
                 <KeyboardIcon
-                  size={17}
+                  size={18}
                   color={keyboardVisible ? colors.accent.default : colors.fg.muted}
                   strokeWidth={1.8}
                 />
@@ -1089,7 +1089,7 @@ const TerminalToolbar = memo(
                 }
               >
                 <Mic
-                  size={17}
+                  size={18}
                   color={micInputOpen ? colors.accent.default : colors.fg.muted}
                   strokeWidth={2}
                 />
@@ -1101,7 +1101,7 @@ const TerminalToolbar = memo(
                 }
               >
                 <CornerDownLeft
-                  size={17}
+                  size={18}
                   color={quickInputOpen ? colors.accent.default : colors.fg.muted}
                   strokeWidth={2}
                 />
@@ -1130,12 +1130,12 @@ const TerminalToolbar = memo(
                       key={key.label}
                       onPress={() => onKeyPress(key)}
                       style={({ pressed }) => ({
-                        height: 42,
-                        minWidth: 46,
-                        borderRadius: 9,
+                        height: 38,
+                        minWidth: 42,
+                        borderRadius: 8,
                         alignItems: "center",
                         justifyContent: "center",
-                        paddingHorizontal: 10,
+                        paddingHorizontal: 8,
                         backgroundColor: pressed
                           ? colors.bg.raised
                           : isActive
@@ -1847,7 +1847,6 @@ export default function TerminalPanel({
   const cancelMicInput = useCallback(() => {
     setMicInputVisible(false);
     stopMicRecording().catch(() => {});
-    inputRef.current?.focus();
   }, [stopMicRecording]);
 
   const sendMicInput = useCallback(async () => {
