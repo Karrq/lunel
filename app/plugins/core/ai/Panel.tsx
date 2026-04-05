@@ -2162,7 +2162,8 @@ export default function AIPanel({ instanceId, isActive, bottomBarHeight }: Plugi
         }
         case "session.error":
         case "prompt_error": {
-          const errMsg = (props.error as string) || "An error occurred";
+          const rawErr = props.error;
+          const errMsg = typeof rawErr === 'string' ? rawErr : (rawErr && typeof rawErr === 'object' ? ((rawErr as any).message || (rawErr as any).name || JSON.stringify(rawErr)) : null) || "An error occurred";
           setIsStreaming(false);
           const sessId = (props.sessionID as string) || (props.sessionId as string);
           if (sessId) {
