@@ -38,12 +38,17 @@ jobs:
           sudo gem install cocoapods
           pod install --repo-update
       
-      - name: Build unsigned IPA
+      - name: List available schemes
         working-directory: ./app/ios
         run: |
-          # Auto-detect scheme name
-          SCHEME=$(xcodebuild -list -workspace *.xcworkspace 2>/dev/null | awk '/Schemes:/{getline; print $1}' | xargs)
-          [[ -z "$SCHEME" ]] && SCHEME="Lunel"
+          echo "Available schemes:"
+          xcodebuild -list -workspace *.xcworkspace 2>/dev/null
+      
+      - name: Build archive
+        working-directory: ./app/ios
+        run: |
+          # Use the lunel scheme explicitly (not a CocoaPods scheme)
+          SCHEME="lunel"
           echo "Building scheme: $SCHEME"
           
           xcodebuild archive \
@@ -51,31 +56,41 @@ jobs:
             -scheme "$SCHEME" \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -archivePath "$PWD/build/Lunel.xcarchive" \
+            -archivePath "$PWD/build/lunel.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO
-          
-          # Find the actual app name
-          echo "Looking for .app in archive..."
-          ls -la build/Lunel.xcarchive/Products/Applications/
-          APP_NAME=$(ls build/Lunel.xcarchive/Products/Applications/ | grep "\.app$" | head -1)
+      
+      - name: Package IPA
+        working-directory: ./app/ios
+        run: |
+          # Find the actual app name in the archive
+          echo "Archive contents:"
+          ls -la build/lunel.xcarchive/Products/Applications/
+          APP_NAME=$(ls build/lunel.xcarchive/Products/Applications/ | grep "\.app$" | head -1)
           echo "Found app: $APP_NAME"
           
           # Package as IPA
           mkdir -p Payload
-          cp -r "build/Lunel.xcarchive/Products/Applications/$APP_NAME" Payload/
-          cd Payload && zip -r ../Lunel-unsigned.ipa . && cd ..
+          cp -r "build/lunel.xcarchive/Products/Applications/$APP_NAME" Payload/
+          cd Payload && zip -r ../lunel-unsigned.ipa . && cd ..
           rm -rf Payload
       
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Lunel-unsigned
-          path: ./app/ios/Lunel-unsigned.ipa
+          name: lunel-unsigned-ipa
+          path: ./app/ios/lunel-unsigned.ipa
+          retention-days: 30
+      
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunel-xcarchive
+          path: ./app/ios/build/lunel.xcarchive
           retention-days: 30
       
       - name: Release
