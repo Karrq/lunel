@@ -1,0 +1,102 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+      
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.2'
+      
+      - name: Install dependencies
+        working-directory: ./app
+        run: |
+          npm ci --legacy-peer-deps
+          npx expo prebuild --platform ios --clean
+      
+      - name: Install CocoaPods
+        working-directory: ./app/ios
+        run: |
+          sudo gem install cocoapods
+          pod install --repo-update
+      
+      - name: List available schemes
+        working-directory: ./app/ios
+        run: |
+          echo "Available schemes:"
+          xcodebuild -list -workspace *.xcworkspace 2>/dev/null
+      
+      - name: Build archive
+        working-directory: ./app/ios
+        run: |
+          # Use the lunel scheme explicitly (not a CocoaPods scheme)
+          SCHEME="lunel"
+          echo "Building scheme: $SCHEME"
+          
+          xcodebuild archive \
+            -workspace *.xcworkspace \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$PWD/build/lunel.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
+      
+      - name: Package IPA
+        working-directory: ./app/ios
+        run: |
+          # Find the actual app name in the archive
+          echo "Archive contents:"
+          ls -la build/lunel.xcarchive/Products/Applications/
+          APP_NAME=$(ls build/lunel.xcarchive/Products/Applications/ | grep "\.app$" | head -1)
+          echo "Found app: $APP_NAME"
+          
+          # Package as IPA
+          mkdir -p Payload
+          cp -r "build/lunel.xcarchive/Products/Applications/$APP_NAME" Payload/
+          cd Payload && zip -r ../lunel-unsigned.ipa . && cd ..
+          rm -rf Payload
+      
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunel-unsigned-ipa
+          path: ./app/ios/lunel-unsigned.ipa
+          retention-days: 30
+      
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunel-xcarchive
+          path: ./app/ios/build/lunel.xcarchive
+          retention-days: 30
+      
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./app/ios/Lunel-unsigned.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
