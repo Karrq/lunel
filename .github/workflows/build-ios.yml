@@ -24,18 +24,7 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.1'
-      
-      - name: Install iOS SDK
-        run: |
-          echo "Available SDKs:"
-          xcodebuild -showsdks
-          echo ""
-          echo "Installing iOS platform..."
-          sudo xcodebuild -downloadPlatform iOS
-          echo ""
-          echo "Installed platforms:"
-          xcrun xcodebuild -showdestinations -scheme ' ' -workspace ' ' 2>/dev/null | head -30 || true
+          xcode-version: '26.2'
       
       - name: Install dependencies
         working-directory: ./app
