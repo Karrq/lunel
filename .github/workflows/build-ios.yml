@@ -59,10 +59,15 @@ jobs:
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO
           
+          # Find the actual app name
+          echo "Looking for .app in archive..."
+          ls -la build/Lunel.xcarchive/Products/Applications/
+          APP_NAME=$(ls build/Lunel.xcarchive/Products/Applications/ | grep "\.app$" | head -1)
+          echo "Found app: $APP_NAME"
+          
           # Package as IPA
           mkdir -p Payload
-          cp -r build/Lunel.xcarchive/Products/Applications/*.app Payload/ 2>/dev/null || \
-            cp -r build/Lunel.xcarchive/Products/Applications/Lunel.app Payload/
+          cp -r "build/Lunel.xcarchive/Products/Applications/$APP_NAME" Payload/
           cd Payload && zip -r ../Lunel-unsigned.ipa . && cd ..
           rm -rf Payload
       
