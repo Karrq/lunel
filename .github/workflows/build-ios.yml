@@ -67,16 +67,27 @@ jobs:
       - name: Package IPA
         working-directory: ./app/ios
         run: |
+          set -euo pipefail
+
           # Find the actual app name in the archive
           echo "Archive contents:"
           ls -la build/lunel.xcarchive/Products/Applications/
-          APP_NAME=$(ls build/lunel.xcarchive/Products/Applications/ | grep "\.app$" | head -1)
+          APP_NAME=$(find build/lunel.xcarchive/Products/Applications -maxdepth 1 -type d -name '*.app' -exec basename {} \; | head -1)
+          if [ -z "$APP_NAME" ]; then
+            echo "No .app bundle found in archive"
+            exit 1
+          fi
           echo "Found app: $APP_NAME"
-          
-          # Package as IPA
+
+          # Build a valid IPA with top-level Payload/<App>.app
+          rm -rf Payload lunel-unsigned.ipa
           mkdir -p Payload
-          cp -r "build/lunel.xcarchive/Products/Applications/$APP_NAME" Payload/
-          cd Payload && zip -r ../lunel-unsigned.ipa . && cd ..
+          cp -R "build/lunel.xcarchive/Products/Applications/$APP_NAME" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload lunel-unsigned.ipa
+
+          echo "IPA contents:"
+          unzip -l lunel-unsigned.ipa | head -40
+
           rm -rf Payload
       
       - name: Upload IPA
@@ -97,6 +108,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: ./app/ios/Lunel-unsigned.ipa
+          files: ./app/ios/lunel-unsigned.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
